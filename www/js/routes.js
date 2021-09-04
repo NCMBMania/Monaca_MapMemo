@@ -11,9 +11,15 @@ const routes = [
   },
   // データ投入画面
   {
-    path: '/import',
-    name: 'Import',
-    componentUrl: './pages/import.html'
+    path: '/add',
+    name: 'Add',
+    componentUrl: './pages/form.html'
+  },
+  // データ投入画面
+  {
+    path: '/list',
+    name: 'List',
+    componentUrl: './pages/list.html'
   },
   // Default route (404 page). MUST BE THE LAST
   {

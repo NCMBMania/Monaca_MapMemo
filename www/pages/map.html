@@ -4,10 +4,7 @@
       <div class="navbar-bg"></div>
       <div class="navbar-inner sliding">
         <div class="title">マップ</div>
-        <div class="right">
-          <a href="#" @click=${clear}><i class="f7-icons">trash</i></a>
-        </div>
-        </div>
+      </div>
     </div>
     <div class="page-content">
       <div id="map"></div>
@@ -23,120 +20,82 @@
 </style>
 
 <script>
-  export default async function (props, {$f7, $f7router, $on, $onBeforeMount, $onMounted, $onBeforeUnmount, $onUnmounted }) {
-    // タップしたマーカーが入る
-    const markers = [];
-    // 駅のマーカーが入る
-    const stationsMarkers = [];
+  export default async function (props, {$f7, $f7router, $on, $store }) {
+    // Mapboxのアクセストークンをセット
+    mapboxgl.accessToken = mapboxAccessToken;
     // MapBoxオブジェクト
     let map;
-
-    // 画面表示前に実行されるイベント
+    // 現在位置をストア（アプリ共通変数）に入れる
+    $store.dispatch('setCoords', await getLocation());
+    
+    // DOMが初期化完了した際に呼ばれるイベント
     $on('pageBeforeIn', async (e, page) => {
+      // ストア（アプリ共通変数）に入った位置情報（現在位置）を取得
+      const { longitude, latitude } = $store.state.coords;
+
       // MapBoxを用意
-      mapboxgl.accessToken = mapboxAccessToken;
       map = new mapboxgl.Map({
         container: 'map',
         style: 'mapbox://styles/mapbox/streets-v11',
-        center: [139.7454329, 35.6585805], // 東京タワーの位置情報
+        center: [longitude, latitude], // 現在位置を中心に地図を表示
         zoom: 14
+      });
+
+      // 地図を動かし終わった時のイベント
+      map.on('moveend', async e => {
+        // 地図の中心点を取得
+        const center = map.getCenter();
+        // ストア（アプリ共通変数）に入れる用のオブジェクトを作成
+        const coords = {latitude: center.lat, longitude: center.lng};
+        // ストア（アプリ共通変数）に保存
+        $store.dispatch('setCoords', { coords } );
       });
 
       // 地図をクリックした場合
       map.on('click', async e => {
-        addMarker(e.lngLat.lng, e.lngLat.lat);
-        if (markers.length === 1) {
-          // マーカーを中心に5km以内の駅をリストアップ
-          searchMapPoint();
-        } else {
-          // 2つのマーカーに含まれる駅をリストアップ
-          searchMapSquare();
-        }
-      })
+        // ポップアップを立てる
+        addPopup(e.lngLat.lng, e.lngLat.lat);
+      });
     });
 
-    // マーカーを立てる処理
-    const addMarker = (lng, lat) => {
-      // すでに2つのマーカーが立っている場合は、前のものを削除する
-      if (markers.length == 2) {
-        markers[0].remove();
-        markers.shift();
-      }
-      // マーカーを立てる
-      const marker = new mapboxgl.Marker()
-        .setLngLat([lng, lat])
+    // この画面が表示された時のイベント
+    $on('page:tabshow', async function(e, page) {
+      // 一覧画面からメモが送られてきているかチェック
+      const { memo } =  $store.state;
+      // なければ終わり
+      if (!memo) return;
+      // メモの位置情報を取得
+      const coords = [memo.geo.longitude, memo.geo.latitude];
+      // 位置情報を地図の中心に、かつズームをセット
+      map.setCenter(coords);
+      map.setZoom(14);
+      // メモした内容でポップアップを作成
+      new mapboxgl.Popup()
+        .setLngLat(coords)
+        .setHTML(`<h3>${memo.body}</h3>`)
+        .setMaxWidth('300px')
         .addTo(map);
-      markers.push(marker);
+      // メモはストア（共通変数）から削除
+      $store.dispatch('setMemo', null);
+    });
+
+    // ポップアップを立てる処理
+    const addPopup = (lng, lat) => {
+      // ポップアップを立てる
+      new mapboxgl.Popup()
+        .setLngLat([lng, lat])
+        .setHTML('<div class="addMemo">ここにメモ</div>')
+        .setMaxWidth('300px')
+        .addTo(map);
+      // ポップアップをタップした際のイベント
+      $f7.$el.find('.addMemo').on('click', e => {
+        // 追加用フォームへ移動する（位置情報を次の画面に送る）
+        $f7router.navigate('/add', {
+          props: { lng, lat }
+        });
+      });
     }
 
-    // 駅のマーカーを削除する処理
-    const clearStations = () => {
-      for (const marker of stationsMarkers) {
-        marker.remove();
-      }
-      stationsMarkers.splice(0, stationsMarkers.length);
-    }
-
-    // 1つのマーカーを中心に、2km以内の駅を検索する処理
-    const searchMapPoint = async () => {
-      // すでにある駅のマーカーを削除
-      clearStations();
-      // 1つ目のマーカーの位置情報を取得
-      const {lng, lat} = markers[0]._lngLat;
-      // NCMBの位置情報オブジェクト作成
-      const geo = new ncmb.GeoPoint(lat, lng);
-      // 検索するクラス（DBでいうテーブル相当）
-      const Station = ncmb.DataStore('Station');
-      // 検索条件を指定
-      const stations = await Station
-        .withinKilometers('geo', geo, 2) // 2km以内のデータを検索
-        .limit(50)
-        .fetchAll();
-      // 検索結果をマーカーとして地図上に表示
-      addStationMarkers(stations);
-    }
-
-    // 2つのマーカーに含まれている駅を検索する処理
-    const searchMapSquare = async () => {
-      // すでにある駅のマーカーを削除
-      clearStations();
-      // マーカーをNCMBの位置情報オブジェクトにする
-      const geos = [];
-      for (const marker of markers) {
-        const {lng, lat} = marker._lngLat;
-        geos.push(new ncmb.GeoPoint(lat, lng));
-      }
-      // 検索するクラス（DBでいうテーブル相当）
-      const Station = ncmb.DataStore('Station');
-      // 検索条件を指定
-      const stations = await Station
-        .withinSquare('geo', geos[0], geos[1]) // 2つの位置情報で検索
-        .limit(50)
-        .fetchAll();
-      // 検索結果をマーカーとして地図上に表示
-      addStationMarkers(stations);
-    }
-
-    // 検索結果の駅一覧を地図上に表示
-    const addStationMarkers = (stations) => {
-      for (const station of stations) {
-        const marker = new mapboxgl.Marker({color: '#f00'})
-          .setLngLat([station.geo.longitude, station.geo.latitude])
-          .addTo(map);
-        stationsMarkers.push(marker)
-      }
-    }
-
-    // マーカーを削除する
-    const clear = () => {
-      for (const marker of markers) {
-        marker.remove();
-      }
-      markers.splice(0, 2);
-      // 駅のマーカーも削除
-      clearStations();
-    }
-    
     return $render;
   }
 </script>

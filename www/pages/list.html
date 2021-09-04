@@ -1,0 +1,72 @@
+<template>
+  <div class="page">
+    <div class="navbar">
+      <div class="navbar-bg"></div>
+      <div class="navbar-inner sliding">
+        <div class="title">メモ一覧</div>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="list media-list">
+        <ul id="memos">
+        </ul>
+      </div>
+    </div>
+  </div>
+</template>
+<script>
+  export default async function (props, {$f7, $f7router, $on, $store }) {
+    // タブが表示された際に実行されるイベント
+    $on('page:tabshow', async function(e, page) {
+      // ストア（共通変数）から位置情報を取得
+      const { longitude, latitude } = $store.state.coords;
+      // 位置情報に基づいてメモを取得
+      const ary = await getAllMemo({ longitude, latitude });
+      // メモを表示
+      showMemo(ary, { longitude, latitude });
+    });
+
+    // NCMBのデータストアから付近のメモデータを取得する関数
+    const getAllMemo = ({ longitude, latitude }) => {
+      // メモクラス（DBでいうテーブル相当）
+      const Memo = ncmb.DataStore('Memo');
+      // 位置情報オブジェクトを作成
+      const geo = new ncmb.GeoPoint(latitude, longitude);
+      // 5キロ圏内のメモを検索
+      return Memo
+        .withinKilometers('geo', geo, 5)
+        .fetchAll();
+    }
+
+    // メモを一覧表示する
+    const showMemo = (ary, { longitude, latitude }) => {
+      $f7.$el.find('#memos').html(ary.map(memo => `
+        <li>
+          <a href="#" class="item-link item-content" data-object-id="${memo.objectId}">
+            <div class="item-inner">
+              <div class="item-title-row">
+                <div class="item-title">${memo.address}</div>
+                <div class="item-after">${distance(memo.geo.latitude, memo.geo.longitude, latitude, longitude)}m</div>
+              </div>
+              <div class="item-text">${memo.body}</div>
+            </div>
+          </a>
+        </li>
+      `)
+      .join(''));
+      // 一覧表示したリストに対してタップイベントを追加
+      $f7.$el.find('#memos a').on('click', e => {
+        // タップしたデータのキー（objectId）を取得
+        const objectId = $(e.target).parents('a').data('object-id');
+        // 対象になるメモデータを取得
+        const memo = ary.filter(m => m.objectId === objectId)[0];
+        // ストア（共通変数）に入れる
+        $store.dispatch('setMemo', memo );
+        // 地図のタブを表示
+        app.tab.show('#view-home')
+      });
+    }
+
+    return $render;
+  }
+</script>
